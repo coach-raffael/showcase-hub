@@ -35,7 +35,7 @@ Prüfen: `systemctl status demo-agent`, `ls -l /run/demo-agent/agent.sock`.
 
 ## 3. Keycloak (Repo identity, als Code)
 
-- Client `demos-web` (confidential, Authorization Code + PKCE), Redirect `https://demos.coach-raffael.com/auth/callback/keycloak`,
+- Clients `demos-web` und `demos-mcp` sowie die Rolle `demos-admin` liegen in `coach-raffael/identity` (realm/coach-raffael.json); die Secrets erzeugt und setzt `infra/setup.ps1`
   Post-Logout `https://demos.coach-raffael.com/*`, Audience-Mapper → `demos-api`
 - Client `demos-mcp` für den Claude-Connector (wie `crm-mcp`), Audience `demos-api`
 - Realm-Rolle `demos-admin` → Raffael
