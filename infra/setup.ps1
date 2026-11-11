@@ -30,6 +30,7 @@ if ($ghStatus -notmatch "admin:org") {
     throw "gh fehlt der Scope admin:org – einmal im normalen Terminal: gh auth refresh -h github.com -s admin:org"
 }
 $Ssh = @("-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes")
+if (-not (Test-Path $RootKey)) { throw "Root-Schlüssel $RootKey nicht gefunden" }
 
 # ---------------------------------------------------------------------------------------------------------
 # 1. Zufallswerte erzeugen (ohne openssl)
@@ -98,10 +99,10 @@ exit 0
 "@
 # CRLF aus ISE entfernen, sonst stolpert bash
 $remote = $remote -replace "`r", ""
-$remote | ssh @Ssh "$VpsAdmin@$VpsHost" "bash -s"
+$remote | ssh @Ssh -i $RootKey -o IdentitiesOnly=yes "$VpsAdmin@$VpsHost" "bash -s"
 Assert-Ok "Server-Einrichtung"
 
-$AgentGid = (ssh @Ssh "$VpsAdmin@$VpsHost" "getent group demo-agent | cut -d: -f3" | Out-String).Trim()
+$AgentGid = (ssh @Ssh -i $RootKey -o IdentitiesOnly=yes "$VpsAdmin@$VpsHost" "getent group demo-agent | cut -d: -f3" | Out-String).Trim()
 if ($AgentGid -notmatch "^\d+$") { throw "AGENT_GID nicht lesbar: $AgentGid" }
 Write-Host "AGENT_GID = $AgentGid"
 
