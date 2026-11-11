@@ -97,10 +97,24 @@ Write-Host "Host-Keys:"; Write-Host $KnownHosts
 # ---------------------------------------------------------------------------------------------------------
 # 3. Server einrichten (einmalig): demo-agent, Benutzer demos-deploy, Verzeichnisse
 # ---------------------------------------------------------------------------------------------------------
+# Das Repo ist privat – der Server kann es nicht selbst klonen. Lokal mit gh klonen (LF behalten!) und die
+# Agent-Dateien per scp hochladen.
+$Src = Join-Path $env:TEMP "showcase-hub-src"
+if (Test-Path $Src) { Remove-Item $Src -Recurse -Force }
+gh repo clone $Repo $Src -- --depth 1 -q -c core.autocrlf=false
+Assert-Ok "Repo lokal klonen"
+ssh @Ssh -i $RootKey -o IdentitiesOnly=yes "$VpsAdmin@$VpsHost" "rm -rf /tmp/showcase-hub-agent && mkdir -p /tmp/showcase-hub-agent"
+Assert-Ok "Upload-Verzeichnis"
+scp -o StrictHostKeyChecking=accept-new -o BatchMode=yes -i $RootKey -o IdentitiesOnly=yes `
+    (Join-Path $Src "agent\install.sh") (Join-Path $Src "agent\demo_agent.py") (Join-Path $Src "agent\demo-agent.service") `
+    "$VpsAdmin@$($VpsHost):/tmp/showcase-hub-agent/"
+Assert-Ok "Agent-Dateien hochladen"
+
 $remote = @"
 set -e
-rm -rf /tmp/showcase-hub && git clone -q --depth 1 https://github.com/$Repo /tmp/showcase-hub
-AGENT_KEY='$AgentKey' DEPLOY_USER='$DeployUser' /tmp/showcase-hub/agent/install.sh
+sed -i 's/\r$//' /tmp/showcase-hub-agent/*
+chmod +x /tmp/showcase-hub-agent/install.sh
+AGENT_KEY='$AgentKey' DEPLOY_USER='$DeployUser' /tmp/showcase-hub-agent/install.sh
 install -d -m 700 -o $DeployUser -g $DeployUser /home/$DeployUser/.ssh
 grep -qxF '$DeployPub' /home/$DeployUser/.ssh/authorized_keys 2>/dev/null || echo '$DeployPub' >> /home/$DeployUser/.ssh/authorized_keys
 chown $DeployUser`:$DeployUser /home/$DeployUser/.ssh/authorized_keys && chmod 600 /home/$DeployUser/.ssh/authorized_keys
@@ -154,6 +168,10 @@ Write-Host "Für den Claude-Connector (demos-mcp) steht das Client-Secret in $Va
 # ---------------------------------------------------------------------------------------------------------
 gh api -X PUT "repos/$Repo/environments/production" | Out-Null
 
+# Privates Hub-Repo: Showcase-Repos der Organisation dürfen build-showcase.yml aufrufen
+gh api -X PUT "repos/$Repo/actions/permissions/access" -f access_level=organization
+if ($LASTEXITCODE -ne 0) { Write-Warning "Workflow-Freigabe für die Organisation nicht gesetzt – Settings → Actions → General → Access" }
+
 function Set-EnvSecret([string]$name, [string]$value) {
     if (-not $value) { throw "$name ist leer" }
     # --body statt Pipe: Windows PowerShell hängt beim Pipen an Konsolenprogramme einen Zeilenumbruch an
@@ -202,7 +220,7 @@ gh variable set DEPLOY_ENABLED --repo $Repo --body "true"
 $Tmp = Join-Path $env:TEMP "demo-template"
 if (Test-Path $Tmp) { Remove-Item $Tmp -Recurse -Force }
 if (Test-Path (Join-Path $env:TEMP "showcase-hub-src")) { Remove-Item (Join-Path $env:TEMP "showcase-hub-src") -Recurse -Force }
-git clone -q --depth 1 "https://github.com/$Repo" (Join-Path $env:TEMP "showcase-hub-src")
+gh repo clone $Repo (Join-Path $env:TEMP "showcase-hub-src") -- --depth 1 -q -c core.autocrlf=false
 New-Item -ItemType Directory $Tmp | Out-Null
 Copy-Item (Join-Path $env:TEMP "showcase-hub-src\template\*") $Tmp -Recurse -Force
 Copy-Item (Join-Path $env:TEMP "showcase-hub-src\template\.github") $Tmp -Recurse -Force
