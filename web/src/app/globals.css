@@ -1,0 +1,232 @@
+@import "tailwindcss";
+
+/*
+  Style: Ridgeline (GetLayers) – committed in getlayers.json.
+  Die Seite ist EINE Karte auf grauem Feld: Feld #f5f6f7 → Karte #fcfcfc (32px) → Well #ffffff.
+  Instrument Sans spricht, Geist Mono beschriftet und zählt (Labels, Zahlen, Buttons).
+  Navy ist Fläche oder Füllung (Buttons, Panel), nie Textfarbe.
+  Radien: 32 Seite · 24 Rahmen · 20 Karten · 18 Chips · 16 Popover · 14/12 klein · 28 Pills.
+*/
+:root {
+  --gl-bg: #f5f6f7;
+  --gl-bg-alt: #133153;
+  --gl-surface: #ffffff;
+  --gl-surface-raised: #fcfcfc;
+  --gl-ink: #0e2035;
+  --gl-ink-muted: #5e6d7e;
+  --gl-ink-subtle: #bdb9b3;
+  --gl-accent: #133153;
+  --gl-accent-ink: #ffffff;
+  --gl-line: #e4e7e5;
+  --gl-row: rgba(18, 22, 27, 0.12);
+  --gl-soft-line: #e2dcd2;
+  --gl-glow: #dbe6f0;
+  /* Zustandsfarben für Chips – gedämpft, damit Navy der einzige kräftige Ton bleibt */
+  --gl-ok: #2f6b4f;
+  --gl-ok-soft: #e6f1eb;
+  --gl-warn: #8a5a12;
+  --gl-warn-soft: #f6eedd;
+  --gl-bad: #8f2f2f;
+  --gl-bad-soft: #f5e4e2;
+
+  --gl-font-display: "Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif;
+  --gl-font-body: "Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif;
+  --gl-font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+  --gl-ease: cubic-bezier(0.2, 0, 0, 1);
+  --gl-duration-fast: 150ms;
+  --gl-duration: 250ms;
+
+  --shadow-card: 0 2px 12px rgba(14, 32, 53, 0.05);
+  --shadow-float: 0 16px 48px rgba(14, 32, 53, 0.18);
+}
+
+@theme inline {
+  --color-field: var(--gl-bg);
+  --color-navy: var(--gl-bg-alt);
+  --color-well: var(--gl-surface);
+  --color-card: var(--gl-surface-raised);
+  --color-ink: var(--gl-ink);
+  --color-muted: var(--gl-ink-muted);
+  --color-subtle: var(--gl-ink-subtle);
+  --color-line: var(--gl-line);
+  --color-row: var(--gl-row);
+  --color-glow: var(--gl-glow);
+  --color-ok: var(--gl-ok);
+  --color-ok-soft: var(--gl-ok-soft);
+  --color-warn: var(--gl-warn);
+  --color-warn-soft: var(--gl-warn-soft);
+  --color-bad: var(--gl-bad);
+  --color-bad-soft: var(--gl-bad-soft);
+  --font-sans: var(--gl-font-body);
+  --font-mono: var(--gl-font-mono);
+  --radius-page: 32px;
+  --radius-frame: 24px;
+  --radius-card: 20px;
+  --radius-chip: 18px;
+  --radius-pop: 16px;
+  --radius-pill: 28px;
+}
+
+html {
+  background: var(--gl-bg);
+  color: var(--gl-ink);
+  font-family: var(--gl-font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+/* Mono-Label: Information, nicht Sprache. Großbuchstaben immer mit +1px Laufweite. */
+.label {
+  font-family: var(--gl-font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--gl-ink-muted);
+}
+
+.num {
+  font-family: var(--gl-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--gl-font-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+/* Pills: jede Schaltfläche, jedes Eingabefeld */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 44px;
+  padding: 0 1.25rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--gl-font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background-color var(--gl-duration-fast) var(--gl-ease), color var(--gl-duration-fast) var(--gl-ease),
+    border-color var(--gl-duration-fast) var(--gl-ease);
+  cursor: pointer;
+}
+.pill-deep {
+  background: var(--gl-accent);
+  color: var(--gl-accent-ink);
+}
+.pill-deep:hover {
+  background: #0c2440;
+}
+.pill-soft {
+  background: var(--gl-bg);
+  color: var(--gl-ink);
+}
+.pill-soft:hover {
+  background: #eceef0;
+}
+.pill-sm {
+  height: 34px;
+  padding: 0 0.9rem;
+  font-size: 12px;
+}
+.pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.field {
+  height: 44px;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--gl-bg);
+  border: 1px solid transparent;
+  padding: 0 1.1rem;
+  font-size: 15px;
+  color: var(--gl-ink);
+  outline: none;
+  transition: border-color var(--gl-duration-fast) var(--gl-ease), background-color var(--gl-duration-fast) var(--gl-ease);
+}
+.field:focus {
+  border-color: var(--gl-accent);
+  background: var(--gl-surface);
+}
+textarea.field {
+  height: auto;
+  min-height: 88px;
+  padding: 0.75rem 1.1rem;
+  border-radius: var(--radius-pop);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gl-accent);
+  outline-offset: 2px;
+}
+
+/* Ankunft: zeilenweise 20px von unten, ohne Überschwingen. Im App-Alltag bewusst kurz. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 520ms var(--gl-ease) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    animation: none;
+  }
+}
+
+/* Dark Mode: gleiche Struktur, Navy wird zur Fläche, Karten heben sich leicht ab */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gl-bg: #0b1622;
+    --gl-surface: #101e2d;
+    --gl-surface-raised: #0e1a27;
+    --gl-ink: #e8edf2;
+    --gl-ink-muted: #93a3b4;
+    --gl-ink-subtle: #4d5d6e;
+    --gl-accent: #dbe6f0;
+    --gl-accent-ink: #0e2035;
+    --gl-line: #1f3044;
+    --gl-row: rgba(255, 255, 255, 0.08);
+    --gl-glow: #17324f;
+    --gl-ok: #8fd1ae;
+    --gl-ok-soft: #12301f;
+    --gl-warn: #e7c178;
+    --gl-warn-soft: #33270f;
+    --gl-bad: #f0a3a3;
+    --gl-bad-soft: #3a1717;
+    --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.3);
+  }
+  .pill-deep:hover {
+    background: #c7d6e4;
+  }
+  .pill-soft:hover {
+    background: #16283b;
+  }
+}
+
+/* Logs und YAML */
+.code {
+  font-family: var(--gl-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

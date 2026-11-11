@@ -1,0 +1,23 @@
+name: agent
+
+# Tests des demo-agent (nur Python-Standardbibliothek, ohne Docker – mit Fake-docker).
+
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**", ".github/workflows/agent.yml"]
+  pull_request:
+    paths: ["agent/**", ".github/workflows/agent.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # Ubuntu 24.04 auf dem VPS
+      - run: python -m unittest discover -s agent -v
+      - name: Install-Skript prüfen
+        run: bash -n agent/install.sh && shellcheck agent/install.sh

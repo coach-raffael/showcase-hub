@@ -1,0 +1,140 @@
+name: deploy
+
+# Rollt den Hub selbst (postgres, api, web) auf den Hostinger-VPS aus – gleiches Muster wie crm-tool:
+# compose.yml + .env per SSH nach ${APP_DIR}, Images ziehen, `docker compose up -d`.
+# Die Demos rollt deploy-demo.yml aus, nicht dieser Workflow.
+#
+# - Automatisch nach erfolgreichem Image-Build auf main (api oder web), sobald DEPLOY_ENABLED=true.
+# - Manuell über "Run workflow": image_tag = latest oder ein Commit-SHA (Rollback).
+
+on:
+  workflow_run:
+    workflows: [api, web]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image-Tag (latest oder Commit-SHA für Rollback)"
+        type: string
+        default: latest
+
+concurrency:
+  group: deploy-hub
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.DEPLOY_ENABLED == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DOMAIN: ${{ vars.DOMAIN || 'demos.coach-raffael.com' }}
+      APP_DIR: ${{ vars.APP_DIR || '/opt/showcase-hub' }}
+      IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+      SSH_USER: ${{ vars.SSH_USER || 'demos-deploy' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SSH key and known hosts
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS nicht gesetzt – Host-Key wird beim ersten Kontakt übernommen"
+            ssh-keyscan -T 15 "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+          EOF
+
+      - name: Render .env
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
+          HUB_SECRET_KEY: ${{ secrets.HUB_SECRET_KEY }}       # 32 Byte Base64: openssl rand -base64 32
+          HUB_CI_TOKEN: ${{ secrets.HUB_CI_TOKEN }}           # hubci_… – gleicher Wert wie Org-Secret SHOWCASE_HUB_TOKEN
+          HUB_GITHUB_TOKEN: ${{ secrets.HUB_GITHUB_TOKEN }}   # Fine-grained: Actions write (showcase-hub), Contents write (Homepage)
+          AGENT_KEY: ${{ secrets.AGENT_KEY }}                 # gleicher Wert wie /etc/demo-agent/key
+          AGENT_GID: ${{ vars.AGENT_GID }}                    # GID der Gruppe demo-agent (Ausgabe von agent/install.sh)
+          KEYCLOAK_ISSUER: ${{ vars.KEYCLOAK_ISSUER || 'https://auth.coach-raffael.com/realms/coach-raffael' }}
+          HOMEPAGE_REPO: ${{ vars.HOMEPAGE_REPO }}            # leer = Homepage-Neubau aus
+          BACKUP_KEEP_DAYS: ${{ vars.BACKUP_KEEP_DAYS || '30' }}
+        run: |
+          for v in DB_PASSWORD AUTH_SECRET KEYCLOAK_CLIENT_SECRET HUB_SECRET_KEY HUB_CI_TOKEN; do
+            test -n "${!v}" || { echo "::error::Secret $v fehlt"; exit 1; }
+          done
+          case "$HUB_CI_TOKEN" in hubci_*) ;; *) echo "::error::HUB_CI_TOKEN muss mit hubci_ beginnen"; exit 1;; esac
+          if [ -z "$AGENT_KEY" ] || [ -z "$AGENT_GID" ]; then
+            echo "::warning::AGENT_KEY/AGENT_GID fehlen – Start/Stopp von Demos ist aus, bis agent/install.sh lief"
+          fi
+          case "$HUB_GITHUB_TOKEN$AGENT_KEY" in *"'"*) echo "::error::Tokens dürfen kein ' enthalten"; exit 1;; esac
+          cat > deploy.env <<EOF
+          # erzeugt von GitHub Actions (${GITHUB_SHA}) – nicht von Hand ändern
+          IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY}
+          IMAGE_TAG=${IMAGE_TAG}
+          DOMAIN=${DOMAIN}
+          DB_PASSWORD=${DB_PASSWORD}
+          AUTH_SECRET=${AUTH_SECRET}
+          KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+          KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER}
+          HUB_SECRET_KEY=${HUB_SECRET_KEY}
+          HUB_CI_TOKEN=${HUB_CI_TOKEN}
+          HUB_GITHUB_TOKEN='${HUB_GITHUB_TOKEN}'
+          HUB_REPO=${GITHUB_REPOSITORY}
+          HOMEPAGE_REPO=${HOMEPAGE_REPO}
+          AGENT_KEY='${AGENT_KEY}'
+          AGENT_GID=${AGENT_GID:-65534}
+          BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS}
+          EOF
+
+      - name: Upload compose + env
+        run: |
+          ssh vps "mkdir -p '$APP_DIR' && docker ps --format '{{.Image}}' | grep -q traefik || echo '::warning::Kein Traefik-Container gefunden'"
+          scp infra/compose.prod.yml vps:"$APP_DIR/compose.yml"
+          scp deploy.env vps:"$APP_DIR/.env"
+          ssh vps "chmod 600 '$APP_DIR/.env'"
+
+      - name: Pull & restart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          ssh vps "cd '$APP_DIR' \
+            && echo '$GHCR_TOKEN' | docker login ghcr.io -u '$GHCR_USER' --password-stdin \
+            && docker compose pull --quiet \
+            && docker compose up -d --remove-orphans \
+            && docker logout ghcr.io \
+            && docker image prune -f >/dev/null"
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 18); do
+            if curl -fsS --max-time 15 "https://${DOMAIN}/api/health" | grep -q '"status":"ok"' \
+               && curl -fsS --max-time 15 "https://${DOMAIN}/" | grep -qi 'showcase'; then
+              echo "https://${DOMAIN} antwortet (api + web)"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::https://${DOMAIN}/api/health liefert kein {\"status\":\"ok\"} – DNS gesetzt? Zertifikat da?"
+          ssh vps "cd '$APP_DIR' && docker compose ps && docker compose logs --tail=50 api web" || true
+          exit 1

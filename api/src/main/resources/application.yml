@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: demos-api
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/demos}
+    username: ${DB_USER:demos}
+    password: ${DB_PASSWORD:demos}
+  flyway:
+    enabled: true
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    default-property-inclusion: non_null
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: showcase-hub
+        version: 0.1.0
+        type: SYNC
+        instructions: >-
+          Showcase-Hub von Raffael (demos.coach-raffael.com): Showcases und Demos registrieren, ausrollen,
+          starten, stoppen und im Katalog pflegen. Jedes Schreib-Tool unterliegt einer Richtlinie: ALLOW wird
+          sofort ausgeführt, APPROVAL legt eine Freigabe an, die Raffael in der Oberfläche bestätigt (Antwort
+          enthält status=pending_approval und den Link), DENY ist gesperrt. Öffentlich (visibility=public)
+          wird ein Showcase nur mit grünem Qualitätsgate. Registrieren heißt: Repo nennen (owner/repo), der Hub
+          liest demo.yaml selbst.
+        streamable-http:
+          mcp-endpoint: /mcp
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER:https://auth.coach-raffael.com/realms/coach-raffael}
+
+server:
+  port: ${PORT:8080}
+  max-http-request-header-size: 64KB
+  servlet:
+    context-path: /api
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+hub:
+  auth:
+    audience: ${KEYCLOAK_AUDIENCE:demos-api}
+  public-url: ${PUBLIC_URL:http://localhost:3000}
+  demo-domain: ${DEMO_DOMAIN:demos.coach-raffael.com}
+  secret-key: ${HUB_SECRET_KEY:}
+  ci-token: ${HUB_CI_TOKEN:}
+  agent-socket: ${AGENT_SOCKET:}
+  agent-key: ${AGENT_KEY:}
+  github:
+    token: ${HUB_GITHUB_TOKEN:}
+    hub-repo: ${HUB_REPO:coach-raffael/showcase-hub}
+    homepage-repo: ${HOMEPAGE_REPO:coach-raffael/portfolio-page-raffael}
+
+logging:
+  level:
+    com.coachraffael.demos: INFO

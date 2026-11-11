@@ -1,0 +1,250 @@
+name: deploy-demo
+
+# Rollt eine Demo-Version aus – gestartet vom Hub (workflow_dispatch über die GitHub-API), nie von Hand nötig.
+#
+#   1. Bündel (compose.yml, .env, agent.json) beim Hub abholen   GET  /api/ci/deploy/<slug>/<version>/bundle
+#   2. per SSH nach /opt/demos/<slug>/, Images ziehen, starten    (bisheriger Stand bleibt als *.prev liegen)
+#   3. Smoke-Test; scheitert er, wird der bisherige Stand wieder gestartet („letzte grüne Version bleibt live“)
+#   4. Ergebnis melden                                            POST /api/ci/deploy/<slug>/<version>/result
+#   5. Erlebnis-Gate gegen die laufende Demo: Playwright-Abläufe aus dem Showcase-Repo, Konsole, Links,
+#      Mobil-Ansicht, Lighthouse, Sicherheits-Header; Screenshot für Galerie und Homepage
+#                                                                 POST …/experience, …/screenshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Demo-Slug"
+        required: true
+        type: string
+      version_id:
+        description: "Versions-ID im Hub"
+        required: true
+        type: string
+      sha:
+        description: "Commit der Version (nur zur Anzeige)"
+        required: false
+        type: string
+
+run-name: "deploy-demo ${{ inputs.slug }} @ ${{ inputs.sha }}"
+
+concurrency:
+  group: deploy-demo-${{ inputs.slug }}
+  cancel-in-progress: false
+
+env:
+  HUB: ${{ vars.HUB_URL || 'https://demos.coach-raffael.com' }}
+  SLUG: ${{ inputs.slug }}
+  VERSION: ${{ inputs.version_id }}
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      public_url: ${{ steps.bundle.outputs.public_url }}
+      repo: ${{ steps.bundle.outputs.repo }}
+      sha: ${{ steps.bundle.outputs.sha }}
+    env:
+      SSH_USER: ${{ vars.SSH_USER || 'demos-deploy' }}
+    steps:
+      - name: Eingaben prüfen
+        run: |
+          [[ "$SLUG" =~ ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ ]] || { echo "::error::Slug ungültig"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+$ ]] || { echo "::error::version_id ungültig"; exit 1; }
+
+      - name: Bündel abholen
+        id: bundle
+        env:
+          TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+        run: |
+          curl -fsS --max-time 30 -H "Authorization: Bearer $TOKEN" \
+            "$HUB/api/ci/deploy/$SLUG/$VERSION/bundle" -o bundle.json
+          jq -r .compose bundle.json > compose.yml
+          jq -r .env bundle.json > demo.env
+          jq -r .agentConfig bundle.json > agent.json
+          {
+            echo "public_url=$(jq -r .publicUrl bundle.json)"
+            echo "smoke_url=$(jq -r .smokeUrl bundle.json)"
+            echo "repo=$(jq -r .repo bundle.json)"
+            echo "sha=$(jq -r .sha bundle.json)"
+          } >> "$GITHUB_OUTPUT"
+          # Secrets nie ins Log; das Bündel bleibt nur in diesem Lauf
+          while IFS= read -r line; do
+            v="${line#*=}"; v="${v#\'}"; v="${v%\'}"
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done < <(grep -v '^#' demo.env | grep '=' || true)
+          echo "compose.yml:"; cat compose.yml
+
+      - name: SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -T 15 "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+          EOF
+
+      - name: Ausrollen
+        run: |
+          dir="/opt/demos/$SLUG"
+          ssh vps "set -e; install -d -m 2750 '$dir'; cd '$dir'; for f in compose.yml .env agent.json; do [ -f \$f ] && cp -p \$f \$f.prev || true; done"
+          scp compose.yml vps:"$dir/compose.yml.new"
+          scp demo.env vps:"$dir/.env.new"
+          scp agent.json vps:"$dir/agent.json.new"
+          ssh vps "set -e; cd '$dir'; chmod 640 compose.yml.new .env.new agent.json.new; \
+            mv compose.yml.new compose.yml; mv .env.new .env; mv agent.json.new agent.json; \
+            docker compose -p 'demo-$SLUG' --env-file .env pull --quiet; \
+            docker compose -p 'demo-$SLUG' --env-file .env up -d --remove-orphans; \
+            docker image prune -f >/dev/null"
+
+      - name: Smoke-Test
+        id: smoke
+        env:
+          URL: ${{ steps.bundle.outputs.smoke_url }}
+        run: |
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL" || true)
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then echo "$URL antwortet $code"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$URL antwortet nicht (zuletzt $code)"
+          ssh vps "cd /opt/demos/$SLUG && docker compose -p 'demo-$SLUG' ps && docker compose -p 'demo-$SLUG' logs --tail=60" || true
+          exit 1
+
+      - name: Bisherigen Stand wiederherstellen
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          ssh vps "cd /opt/demos/$SLUG && if [ -f compose.yml.prev ]; then \
+              mv compose.yml.prev compose.yml; [ -f .env.prev ] && mv .env.prev .env; [ -f agent.json.prev ] && mv agent.json.prev agent.json; \
+              docker compose -p 'demo-$SLUG' --env-file .env up -d --remove-orphans; echo wiederhergestellt; \
+            else docker compose -p 'demo-$SLUG' --env-file .env stop; echo 'kein vorheriger Stand – gestoppt'; fi"
+
+      - name: Ergebnis melden
+        if: always() && steps.bundle.outcome == 'success'
+        env:
+          TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+          OK: ${{ job.status == 'success' }}
+        run: |
+          detail="Smoke-Test ${{ steps.smoke.outcome }}"
+          jq -n --argjson ok "$OK" --arg detail "$detail" --arg run "$RUN_URL" '{ok:$ok, detail:$detail, runUrl:$run}' \
+            | curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+                --data @- "$HUB/api/ci/deploy/$SLUG/$VERSION/result"
+
+  experience:
+    needs: deploy
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_URL: ${{ needs.deploy.outputs.public_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: hub
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.deploy.outputs.repo }}
+          ref: ${{ needs.deploy.outputs.sha }}
+          path: showcase
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Werkzeuge
+        run: |
+          cd hub/tools/experience && npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+          mkdir -p "$GITHUB_WORKSPACE/out"
+
+      - name: Konsole, Links, Mobil, Screenshot
+        run: node hub/tools/experience/check.mjs "$PUBLIC_URL/" out/visitor.json out/screenshot.png || true
+
+      - name: Kernabläufe (Playwright aus dem Showcase-Repo)
+        env:
+          TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+          BASE_URL: ${{ needs.deploy.outputs.public_url }}/
+        run: |
+          flows=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HUB/api/ci/deploy/$SLUG/$VERSION/bundle" | jq -r '.flows[]?')
+          if [ -z "$flows" ]; then
+            jq -n '[{name:"flows", ok:false, detail:"Keine Kernabläufe in demo.yaml (quality.flows) – ohne sie kein öffentliches Showcase"}]' > out/flows.json
+            exit 0
+          fi
+          if [ ! -f showcase/e2e/package.json ]; then
+            jq -n '[{name:"flows", ok:false, detail:"e2e/package.json fehlt im Showcase-Repo (Vorlage: demo-template)"}]' > out/flows.json
+            exit 0
+          fi
+          cd showcase/e2e
+          npm ci --no-audit --no-fund && npx playwright install --with-deps chromium
+          files=$(printf '%s\n' $flows | sed 's#^e2e/##')
+          if npx playwright test $files --reporter=line > ../../out/flows.log 2>&1; then
+            jq -n --arg d "$(tail -5 ../../out/flows.log)" '[{name:"flows", ok:true, detail:$d}]' > ../../out/flows.json
+          else
+            jq -n --arg d "$(tail -30 ../../out/flows.log)" '[{name:"flows", ok:false, detail:$d}]' > ../../out/flows.json
+          fi
+          cat ../../out/flows.log | tail -40
+
+      - name: Lighthouse
+        env:
+          TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+        run: |
+          limits=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HUB/api/ci/deploy/$SLUG/$VERSION/bundle" | jq -c '.lighthouse // {}')
+          if npx -y lighthouse@12 "$PUBLIC_URL/" --quiet --output=json --output-path=out/lh.json \
+               --only-categories=performance,accessibility,best-practices,seo \
+               --chrome-flags="--headless=new --no-sandbox"; then
+            jq --argjson lim "$limits" '
+              [.categories | to_entries[] | {k: .key, s: ((.value.score // 0) * 100 | floor), min: ($lim[.key] // 90)}] as $r
+              | [{name:"lighthouse", ok: ($r | all(.s >= .min)),
+                  detail: ($r | map("\(.k) \(.s)/\(.min)") | join(", "))}]' out/lh.json > out/lighthouse.json
+          else
+            jq -n '[{name:"lighthouse", ok:false, detail:"Lighthouse lief nicht durch"}]' > out/lighthouse.json
+          fi
+          cat out/lighthouse.json
+
+      - name: Sicherheits-Header
+        run: |
+          h=$(curl -sSI --max-time 20 "$PUBLIC_URL/" | tr -d '\r' | tr 'A-Z' 'a-z')
+          missing=()
+          grep -q '^strict-transport-security:' <<<"$h" || missing+=("Strict-Transport-Security")
+          grep -q '^x-content-type-options: nosniff' <<<"$h" || missing+=("X-Content-Type-Options")
+          grep -q '^referrer-policy:' <<<"$h" || missing+=("Referrer-Policy")
+          if [ ${#missing[@]} -eq 0 ]; then
+            jq -n '[{name:"headers", ok:true, detail:"HSTS, nosniff, Referrer-Policy gesetzt"}]' > out/headers.json
+          else
+            jq -n --arg d "fehlt: ${missing[*]}" '[{name:"headers", ok:false, detail:$d}]' > out/headers.json
+          fi
+          jq -n '[{name:"smoke", ok:true, detail:"Smoke-Test im Deploy bestanden"}]' > out/smoke.json
+
+      - name: An den Hub melden
+        if: always()
+        env:
+          TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+        run: |
+          for f in smoke visitor flows lighthouse headers; do [ -f "out/$f.json" ] || echo '[]' > "out/$f.json"; done
+          jq -s 'add' out/smoke.json out/visitor.json out/flows.json out/lighthouse.json out/headers.json > out/checks.json
+          cat out/checks.json
+          jq '{checks: .}' out/checks.json | curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" --data @- "$HUB/api/ci/deploy/$SLUG/$VERSION/experience"
+          if [ -f out/screenshot.png ]; then
+            curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/png" \
+              --data-binary @out/screenshot.png "$HUB/api/ci/deploy/$SLUG/$VERSION/screenshot"
+          fi
+          if jq -e 'all(.ok)' out/checks.json >/dev/null; then echo "Erlebnis-Gate grün"; else echo "::error::Erlebnis-Gate rot"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experience-${{ inputs.slug }}
+          path: out/
+          retention-days: 14

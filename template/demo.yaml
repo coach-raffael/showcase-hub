@@ -1,0 +1,45 @@
+# Demo-Vertrag für den Showcase-Hub (demos.coach-raffael.com). Prüfung: register_demo bzw. jeder Build.
+slug: my-showcase                       # wird zur Adresse demos.coach-raffael.com/my-showcase
+title: { en: "My Showcase", de: "Mein Showcase" }
+teaser: { en: "One sentence that makes people click." }
+description: { en: "Two or three sentences: what it shows, what is technically interesting." }
+category: showcase                      # showcase | demo | tool
+tags: [spring-boot, nextjs]
+visibility: public                      # Wunsch – öffentlich wird es erst mit grünem Gate (Freigabe im Hub)
+lifecycle: on-demand                    # permanent | on-demand | ttl
+idle_minutes: 60                        # on-demand: schläft so lange nach dem Wecken wieder ein
+routing: path                           # path | subdomain
+wake: anyone                            # anyone | share_link | admin
+
+services:
+  web:
+    image: ghcr.io/coach-raffael/my-showcase-web   # ohne Tag – der Hub setzt die gebaute Version ein
+    port: 3000
+    expose: /
+    memory: 384m
+  api:
+    image: ghcr.io/coach-raffael/my-showcase-api
+    port: 8080
+    expose: /api
+    memory: 512m
+    health: /api/actuator/health
+    depends_on: [db]
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/demo
+      SPRING_DATASOURCE_USERNAME: demo
+  db:
+    image: postgres:16-alpine
+    memory: 256m
+    volumes: [/var/lib/postgresql/data]
+    env:
+      POSTGRES_DB: demo
+      POSTGRES_USER: demo
+
+reset: { service: api, command: ["java", "-jar", "/app/app.jar", "--reset-demo"], nightly: true }
+
+# Werte setzt Raffael im Hub unter Secrets – nie hier eintragen
+env_required: [POSTGRES_PASSWORD, SPRING_DATASOURCE_PASSWORD]
+
+quality:
+  flows: [e2e/core-flow.spec.ts]
+  lighthouse: { performance: 90, accessibility: 95, best-practices: 95, seo: 90 }

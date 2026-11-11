@@ -1,0 +1,21 @@
+name: showcase
+
+# Baut, prüft (Qualitätsgate) und meldet an den Showcase-Hub – grüne Builds rollt der Hub automatisch aus.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  showcase:
+    uses: coach-raffael/showcase-hub/.github/workflows/build-showcase.yml@main
+    with:
+      test-command: "cd api && mvn -B -ntp verify && cd ../web && npm ci && npm test --if-present"
+      lint-command: "cd web && npm ci && npm run lint && npx tsc --noEmit"
+    secrets:
+      hub-token: ${{ secrets.SHOWCASE_HUB_TOKEN }}

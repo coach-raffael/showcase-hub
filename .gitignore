@@ -1,0 +1,18 @@
+# Java
+api/target/
+# Node
+node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+tools/experience/package-lock.json
+# Lokal
+.env
+*.env.local
+data/
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vscode/

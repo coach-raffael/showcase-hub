@@ -1,0 +1,9 @@
+{
+  "name": "showcase-experience-check",
+  "private": true,
+  "type": "module",
+  "description": "Erlebnis-Gate gegen eine laufende Demo: Konsole, Links, Mobil-Ansicht, Screenshot",
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}

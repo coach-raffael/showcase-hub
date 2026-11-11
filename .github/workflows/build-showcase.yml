@@ -1,0 +1,228 @@
+name: build-showcase
+
+# Wiederverwendbarer Workflow für jedes Showcase-Repo: baut die eigenen Images, führt das Build-Qualitätsgate aus,
+# pusht nach GHCR und meldet Version + Gate an den Showcase-Hub. Ist das Gate grün, rollt der Hub automatisch aus.
+#
+# Im Showcase-Repo (.github/workflows/showcase.yml, Vorlage in demo-template):
+#
+#   on: { push: { branches: [main] }, pull_request: {}, workflow_dispatch: {} }
+#   permissions: { contents: read, packages: write }
+#   jobs:
+#     showcase:
+#       uses: coach-raffael/showcase-hub/.github/workflows/build-showcase.yml@main
+#       with:
+#         test-command: "cd api && mvn -B -ntp verify && cd ../web && npm ci && npm test"
+#         lint-command: "cd web && npm ci && npm run lint && npx tsc --noEmit"
+#       secrets:
+#         hub-token: ${{ secrets.SHOWCASE_HUB_TOKEN }}
+#
+# Konvention: jeder eigene Dienst aus demo.yaml hat ein Dockerfile in <dienst>/ (überschreibbar mit `builds`).
+# Pflichtprüfungen (der Hub zählt fehlende als rot): build, tests, lint, secrets, dependencies, image-scan, readme, license.
+
+on:
+  workflow_call:
+    inputs:
+      test-command:
+        description: "Befehl für Unit-/Integrationstests (Pflicht – ohne Tests kein grünes Gate)"
+        type: string
+        required: true
+      lint-command:
+        description: "Befehl für Linter/Formatter/Typprüfung (Pflicht)"
+        type: string
+        required: true
+      setup-java:
+        description: "Java-Version für test/lint, leer = ohne Java"
+        type: string
+        default: "21"
+      setup-node:
+        description: "Node-Version für test/lint, leer = ohne Node"
+        type: string
+        default: "22"
+      builds:
+        description: 'JSON je Dienst, z. B. {"web":{"context":"frontend","dockerfile":"frontend/Dockerfile"}}'
+        type: string
+        default: "{}"
+      manifest:
+        description: "Pfad zu demo.yaml (Sammel-Repo: ordner/demo.yaml)"
+        type: string
+        default: demo.yaml
+      hub-url:
+        type: string
+        default: https://demos.coach-raffael.com
+    secrets:
+      hub-token:
+        description: "HUB_CI_TOKEN (hubci_…) – als Org-Secret SHOWCASE_HUB_TOKEN"
+        required: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CHECKS: ${{ runner.temp }}/checks.jsonl
+      MANIFEST: ${{ inputs.manifest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks prüft die ganze Historie
+
+      - name: demo.yaml lesen
+        id: m
+        run: |
+          f="$MANIFEST"
+          test -f "$f" || { echo "::error::$f fehlt"; exit 1; }
+          slug=$(yq -r '.slug' "$f")
+          routing=$(yq -r '.routing // "path"' "$f")
+          [[ "$slug" =~ ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ ]] || { echo "::error::slug ungültig"; exit 1; }
+          base=$([ "$routing" = "path" ] && echo "/$slug" || echo "")
+          # eigene Dienste: Image beginnt mit ghcr.io/coach-raffael/
+          yq -o=json '.services | to_entries | map(select(.value.image | test("^ghcr.io/coach-raffael/"))) | map({"key": .key, "value": .value.image}) | from_entries' "$f" > own.json
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Dienste:"; cat own.json
+          : > "$CHECKS"
+
+      - name: "Gate: secrets (gitleaks, ganze Historie)"
+        run: |
+          if docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest git /repo --redact --no-banner -v > gitleaks.log 2>&1; then
+            jq -nc '{name:"secrets", ok:true, detail:"gitleaks: keine Funde in der Historie"}' >> "$CHECKS"
+          else
+            jq -nc --arg d "$(grep -E 'Finding|RuleID|File|Commit' gitleaks.log | head -20)" '{name:"secrets", ok:false, detail:$d}' >> "$CHECKS"
+          fi
+
+      - name: "Gate: readme, license"
+        run: |
+          slug='${{ steps.m.outputs.slug }}'
+          if [ -f README.md ] && [ "$(wc -c < README.md)" -ge 400 ] \
+             && grep -q "demos.coach-raffael.com" README.md && grep -q '!\[' README.md \
+             && [ "$(grep -c '^## ' README.md)" -ge 3 ]; then
+            jq -nc '{name:"readme", ok:true, detail:"README mit Live-Link, Bild und Abschnitten"}' >> "$CHECKS"
+          else
+            jq -nc '{name:"readme", ok:false, detail:"README.md braucht ≥ 400 Zeichen, Link auf demos.coach-raffael.com, ein Bild und ≥ 3 Abschnitte (##)"}' >> "$CHECKS"
+          fi
+          if ls LICENSE* >/dev/null 2>&1; then
+            jq -nc '{name:"license", ok:true, detail:"LICENSE vorhanden"}' >> "$CHECKS"
+          else
+            jq -nc '{name:"license", ok:false, detail:"LICENSE fehlt"}' >> "$CHECKS"
+          fi
+
+      - uses: actions/setup-java@v5
+        if: inputs.setup-java != ''
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.setup-java }}
+          cache: ${{ hashFiles('**/pom.xml') != '' && 'maven' || '' }}
+      - uses: actions/setup-node@v4
+        if: inputs.setup-node != ''
+        with:
+          node-version: ${{ inputs.setup-node }}
+
+      - name: "Gate: tests"
+        env:
+          CI: "true"
+          TEST_CMD: ${{ inputs.test-command }}
+        run: |
+          if bash -euo pipefail -c "$TEST_CMD" > tests.log 2>&1; then
+            jq -nc --arg d "$(tail -5 tests.log)" '{name:"tests", ok:true, detail:$d}' >> "$CHECKS"
+          else
+            jq -nc --arg d "$(tail -30 tests.log)" '{name:"tests", ok:false, detail:$d}' >> "$CHECKS"
+          fi
+          tail -40 tests.log
+
+      - name: "Gate: lint"
+        env:
+          LINT_CMD: ${{ inputs.lint-command }}
+        run: |
+          if bash -euo pipefail -c "$LINT_CMD" > lint.log 2>&1; then
+            jq -nc '{name:"lint", ok:true, detail:"ohne Befunde"}' >> "$CHECKS"
+          else
+            jq -nc --arg d "$(tail -30 lint.log)" '{name:"lint", ok:false, detail:$d}' >> "$CHECKS"
+          fi
+          tail -40 lint.log
+
+      - name: "Gate: dependencies (Trivy, HIGH/CRITICAL)"
+        run: |
+          if docker run --rm -v "$PWD:/src" aquasec/trivy:latest fs --quiet --scanners vuln --severity HIGH,CRITICAL \
+               --ignore-unfixed --exit-code 1 --skip-dirs node_modules --skip-dirs .git /src > deps.log 2>&1; then
+            jq -nc '{name:"dependencies", ok:true, detail:"keine behebbaren HIGH/CRITICAL-Lücken"}' >> "$CHECKS"
+          else
+            jq -nc --arg d "$(grep -E 'Total:|CVE-' deps.log | head -20)" '{name:"dependencies", ok:false, detail:$d}' >> "$CHECKS"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Gate: build + image-scan"
+        id: build
+        env:
+          BUILDS: ${{ inputs.builds }}
+          PUSH: ${{ github.event_name != 'pull_request' }}
+        run: |
+          base='${{ steps.m.outputs.base }}'
+          ok=true; detail=""; scan_ok=true; scan_detail=""
+          echo '{}' > images.json
+          for svc in $(jq -r 'keys[]' own.json); do
+            image=$(jq -r --arg s "$svc" '.[$s]' own.json)
+            ctx=$(jq -r --arg s "$svc" '.[$s].context // $s' <<<"$BUILDS")
+            df=$(jq -r --arg s "$svc" --arg c "$ctx" '.[$s].dockerfile // ($c + "/Dockerfile")' <<<"$BUILDS")
+            ref="$image:$GITHUB_SHA"
+            if ! docker buildx build --load -f "$df" -t "$ref" --build-arg "BASE_PATH=$base" \
+                 --build-arg "NEXT_PUBLIC_BASE_PATH=$base" "$ctx" > "build-$svc.log" 2>&1; then
+              ok=false; detail="$detail$svc: Build fehlgeschlagen – $(tail -5 "build-$svc.log" | tr '\n' ' ')"$'\n'
+              continue
+            fi
+            detail="$detail$svc: gebaut"$'\n'
+            if ! docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --quiet \
+                 --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$ref" > "scan-$svc.log" 2>&1; then
+              scan_ok=false; scan_detail="$scan_detail$svc: $(grep -E 'Total:' "scan-$svc.log" | head -3 | tr '\n' ' ')"$'\n'
+            else
+              scan_detail="$scan_detail$svc: sauber"$'\n'
+            fi
+            if [ "$PUSH" = "true" ]; then
+              docker push --quiet "$ref" >/dev/null
+              digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")
+              jq --arg s "$svc" --arg d "$digest" '. + {($s): $d}' images.json > tmp && mv tmp images.json
+            fi
+          done
+          jq -nc --argjson ok "$ok" --arg d "$detail" '{name:"build", ok:$ok, detail:$d}' >> "$CHECKS"
+          jq -nc --argjson ok "$scan_ok" --arg d "$scan_detail" '{name:"image-scan", ok:$ok, detail:$d}' >> "$CHECKS"
+          cat images.json
+
+      - name: Gate-Ergebnis
+        id: gate
+        run: |
+          jq -s '.' "$CHECKS" > checks.json
+          jq -r '.[] | "\(if .ok then "✓" else "✗" end) \(.name): \(.detail | split("\n")[0])"' checks.json
+          {
+            echo "### Qualitätsgate ${{ steps.m.outputs.slug }}"
+            jq -r '.[] | "- \(if .ok then "✅" else "❌" end) **\(.name)** – \(.detail | split("\n")[0])"' checks.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "passed=$(jq 'all(.ok)' checks.json)" >> "$GITHUB_OUTPUT"
+
+      - name: An den Hub melden
+        if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ secrets.hub-token }}
+          HUB: ${{ inputs.hub-url }}
+        run: |
+          jq -n --arg repo "$GITHUB_REPOSITORY" --arg slug '${{ steps.m.outputs.slug }}' --arg sha "$GITHUB_SHA" \
+                --arg path "$MANIFEST" --slurpfile images images.json --slurpfile checks checks.json \
+                --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                '{repo:$repo, slug:$slug, sha:$sha, path:$path, images:$images[0], checks:$checks[0], runUrl:$run}' \
+            | curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+                --data @- "$HUB/api/ci/builds" | tee hub.json
+          echo
+          jq -r '"Hub: \(.hub) – Gate \(if .gatePassed then "grün" else "rot" end), Ausrollen: \(.deploying)"' hub.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rotes Gate
+        if: steps.gate.outputs.passed != 'true'
+        run: |
+          echo "::error::Qualitätsgate rot – diese Version wird nicht öffentlich ausgerollt"
+          exit 1

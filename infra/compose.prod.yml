@@ -1,0 +1,135 @@
+# Produktions-Stack des Showcase-Hubs auf dem Hostinger-VPS. Wird von .github/workflows/deploy.yml
+# nach ${APP_DIR}/compose.yml kopiert; Werte kommen aus der daneben liegenden .env.
+#
+# Eingang ist der globale Traefik aus dem Hostinger Docker Manager (network_mode: host, Entrypoint websecure,
+# Resolver letsencrypt, exposedbydefault=false). Er erreicht die Container-IPs direkt.
+#
+# Routing auf demos.coach-raffael.com:
+#   /api/…            → api      (Priorität 1000 – vor jeder Demo)
+#   /<slug>/…         → Demo     (Priorität 100+, Labels aus der compose.yml der Demo)
+#   alles andere      → web      (Priorität 10: Galerie, Admin – und die Schlafseite, wenn eine Demo nicht läuft)
+#
+# Die Demos selbst laufen als eigene Compose-Projekte demo-<slug> unter /opt/demos/<slug>/ und werden vom
+# demo-agent (systemd, siehe agent/) gestartet und gestoppt. Der Hub hat keinen Docker-Socket.
+
+name: showcase-hub
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: demos
+      POSTGRES_USER: demos
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demos"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: demos
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: demos
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      - /srv/showcase-hub/backups:/backups
+    networks: [internal]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/demos-$$(date +%Y%m%d-%H%M).dump
+          if pg_dump -Fc -f "$$f.part"; then mv "$$f.part" "$$f"; echo "Backup $$f"; else echo "Backup FEHLGESCHLAGEN"; rm -f "$$f.part"; fi
+          find /backups -name 'demos-*.dump' -mtime +$${KEEP_DAYS} -delete
+          sleep 86400
+        done
+
+  api:
+    image: ${IMAGE_REPO}/api:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/demos
+      DB_USER: demos
+      DB_PASSWORD: ${DB_PASSWORD}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      KEYCLOAK_AUDIENCE: demos-api
+      PUBLIC_URL: https://${DOMAIN}
+      DEMO_DOMAIN: ${DOMAIN}
+      HUB_DATA_DIR: /data
+      HUB_SECRET_KEY: ${HUB_SECRET_KEY}
+      HUB_CI_TOKEN: ${HUB_CI_TOKEN}
+      HUB_GITHUB_TOKEN: ${HUB_GITHUB_TOKEN:-}
+      HUB_REPO: ${HUB_REPO:-coach-raffael/showcase-hub}
+      HOMEPAGE_REPO: ${HOMEPAGE_REPO:-}
+      # demo-agent über seinen Unix-Socket (leer = Start/Stopp aus)
+      AGENT_SOCKET: /run/demo-agent/agent.sock
+      AGENT_KEY: ${AGENT_KEY:-}
+    # Nur die Gruppe demo-agent – damit darf der Container den Socket öffnen, sonst nichts
+    group_add:
+      - "${AGENT_GID:-65534}"
+    volumes:
+      - /srv/showcase-hub/data:/data
+      - /run/demo-agent:/run/demo-agent
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      start_period: 60s
+      start_interval: 3s
+      retries: 5
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.demos-api.rule: Host(`${DOMAIN}`) && (Path(`/api`) || PathPrefix(`/api/`))
+      traefik.http.routers.demos-api.entrypoints: websecure
+      traefik.http.routers.demos-api.tls.certresolver: letsencrypt
+      traefik.http.routers.demos-api.priority: "1000"
+      traefik.http.services.demos-api.loadbalancer.server.port: "8080"
+
+  web:
+    image: ${IMAGE_REPO}/web:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8080
+      PUBLIC_URL: https://${DOMAIN}
+      AUTH_URL: https://${DOMAIN}/auth
+      AUTH_TRUST_HOST: "true"
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_KEYCLOAK_ID: demos-web
+      AUTH_KEYCLOAK_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      AUTH_KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+    networks: [internal]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.demos-web.rule: Host(`${DOMAIN}`)
+      traefik.http.routers.demos-web.entrypoints: websecure
+      traefik.http.routers.demos-web.tls.certresolver: letsencrypt
+      traefik.http.routers.demos-web.priority: "10"
+      traefik.http.routers.demos-web.middlewares: demos-web-headers
+      traefik.http.middlewares.demos-web-headers.headers.stsSeconds: "31536000"
+      traefik.http.middlewares.demos-web-headers.headers.contentTypeNosniff: "true"
+      traefik.http.middlewares.demos-web-headers.headers.referrerPolicy: strict-origin-when-cross-origin
+      traefik.http.services.demos-web.loadbalancer.server.port: "3000"
+
+networks:
+  internal:
+
+volumes:
+  pgdata:

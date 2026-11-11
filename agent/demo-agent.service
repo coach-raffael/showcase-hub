@@ -1,0 +1,40 @@
+[Unit]
+Description=demo-agent – startet und stoppt Showcase-Demos für den Showcase-Hub
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=demo-agent
+Group=demo-agent
+# Docker-Zugriff nur über die Gruppe docker; der Hub selbst bekommt keinen Docker-Socket.
+SupplementaryGroups=docker
+Environment=DEMO_AGENT_SOCKET=/run/demo-agent/agent.sock
+Environment=DEMO_AGENT_KEY_FILE=/etc/demo-agent/key
+Environment=DEMOS_ROOT=/opt/demos
+Environment=DOCKER_BIN=/usr/bin/docker
+EnvironmentFile=-/etc/demo-agent/env
+RuntimeDirectory=demo-agent
+RuntimeDirectoryMode=0750
+# Verzeichnis bei Neustarts behalten: der API-Container hat es per Bind-Mount eingebunden
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 /usr/local/lib/demo-agent/demo_agent.py
+Restart=on-failure
+RestartSec=3
+
+# Härtung: der Agent braucht nur seinen Socket, /opt/demos (lesen) und den Docker-Socket.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/demos /etc/demo-agent
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
