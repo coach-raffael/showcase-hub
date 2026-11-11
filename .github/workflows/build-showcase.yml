@@ -61,7 +61,6 @@ jobs:
       contents: read
       packages: write
     env:
-      CHECKS: ${{ runner.temp }}/checks.jsonl
       MANIFEST: ${{ inputs.manifest }}
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +81,9 @@ jobs:
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "Dienste:"; cat own.json
-          : > "$CHECKS"
+          # Prüfergebnisse je Zeile (JSON) – außerhalb des Repos, damit nichts davon mitgebaut wird
+          echo "CHECKS=$RUNNER_TEMP/checks.jsonl" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/checks.jsonl"
 
       - name: "Gate: secrets (gitleaks, ganze Historie)"
         run: |
