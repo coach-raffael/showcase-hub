@@ -3,6 +3,9 @@ package com.coachraffael.demos;
 import com.coachraffael.demos.agent.AgentClient;
 import com.coachraffael.demos.agent.LifecycleService;
 import com.coachraffael.demos.catalog.CatalogService;
+import com.coachraffael.demos.catalog.ExternalScreenshotService;
+import com.coachraffael.demos.catalog.ScreenshotRequester;
+import com.coachraffael.demos.catalog.ScreenshotStore;
 import com.coachraffael.demos.common.Actor;
 import com.coachraffael.demos.common.Errors;
 import com.coachraffael.demos.deploy.DeployService;
@@ -36,8 +39,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,7 +53,8 @@ import static org.mockito.Mockito.when;
  * GitHub und demo-agent sind gemockt.
  */
 @EnabledIf("com.coachraffael.demos.DatabaseTest#available")
-@SpringBootTest
+// Token gesetzt, damit Katalog-Benachrichtigung und Screenshot-Anforderung den (gemockten) GitHub-Client erreichen
+@SpringBootTest(properties = "hub.github.token=test-token")
 class HubFlowTest extends DatabaseTest {
 
     static final Actor UI = new Actor("raffael", "ui");
@@ -67,6 +73,8 @@ class HubFlowTest extends DatabaseTest {
     @Autowired ShareLinkService shareLinks;
     @Autowired LifecycleService lifecycle;
     @Autowired CatalogService catalog;
+    @Autowired ExternalScreenshotService externalScreenshots;
+    @Autowired ScreenshotStore screenshotStore;
     @Autowired McpGuard guard;
     @Autowired PendingActionService pending;
     @Autowired JdbcClient jdbc;
@@ -309,5 +317,34 @@ class HubFlowTest extends DatabaseTest {
         when(github.fetchFile(repo, "demo.yaml", sha('e'))).thenReturn(changed);
         demos.register(repo, "demo.yaml", sha('e'), CI);
         assertThat(demos.get(slug).title()).containsEntry("en", "Test Shop v2");
+    }
+
+    @Test
+    void externalEntriesAreScreenshotByCi() {
+        String ext = "x-" + slug.substring(2);
+        demos.upsertExternal(ext, "https://ext.example.test", Map.of("en", "External"), null, "showcase", List.of("spring"), UI);
+
+        // neuer Eintrag → Workflow für genau diesen Eintrag; gleiche Adresse erneut → keine zweite Aufnahme
+        verify(github, timeout(2000)).dispatchWorkflow("coach-raffael/showcase-hub", ScreenshotRequester.WORKFLOW, "main",
+                Map.of("slug", ext));
+        demos.upsertExternal(ext, "https://ext.example.test", Map.of("en", "External v2"), null, "showcase", List.of(), UI);
+        verify(github, after(500).times(1)).dispatchWorkflow(anyString(), eq(ScreenshotRequester.WORKFLOW), anyString(), any());
+
+        assertThat(externalScreenshots.targets(ext)).containsExactly(new ExternalScreenshotService.Target(ext, "https://ext.example.test"));
+        assertThat(externalScreenshots.targets(null)).extracting(ExternalScreenshotService.Target::slug).contains(ext, "langtutor")
+                .doesNotContain(slug);
+
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 13};
+        String url = externalScreenshots.save(ext, png, CI);
+        assertThat(url).startsWith("https://demos.example.test/api/catalog/" + ext + "/screenshot.png?v=");
+        assertThat(demos.get(ext).screenshotUrl()).isEqualTo(url);
+        assertThat(screenshotStore.load(ext)).hasValueSatisfying(b -> assertThat(b).isEqualTo(png));
+
+        // verwaltete Demos bekommen ihren Screenshot beim Ausrollen, nicht hier; kein PNG → abgelehnt
+        demos.register(repo, null, null, UI);
+        assertThatThrownBy(() -> externalScreenshots.save(slug, png, CI)).isInstanceOf(Errors.Conflict.class);
+        assertThatThrownBy(() -> externalScreenshots.refresh(slug)).isInstanceOf(Errors.Conflict.class);
+        assertThatThrownBy(() -> externalScreenshots.save(ext, "GIF89a..".getBytes(), CI))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

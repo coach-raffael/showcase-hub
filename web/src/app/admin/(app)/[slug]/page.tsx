@@ -9,6 +9,7 @@ import {
   deleteSecret,
   deployDemo,
   extendTtl,
+  requestScreenshot,
   rereadManifest,
   setLifecycle,
   setRouting,
@@ -167,6 +168,30 @@ export default async function DemoPage({ params, searchParams }: Props) {
             <SubmitButton className="pill pill-deep pill-sm">Speichern</SubmitButton>
           </form>
         </Card>
+
+        {!managed && (
+          <Card>
+            <CardHead title="Screenshot" />
+            <div className="space-y-4 p-5 sm:p-6">
+              {d.screenshotUrl && d.visibility === "public" ? (
+                // eslint-disable-next-line @next/next/no-img-element -- Bild kommt aus dem eigenen Katalog-Endpunkt
+                <img src={d.screenshotUrl} alt={`Screenshot ${pick(d.title)}`} width={1280} height={800}
+                  className="w-full rounded-[var(--radius-pop)] border border-line" />
+              ) : (
+                <p className="text-[14px] text-muted">
+                  {d.screenshotUrl ? "Screenshot vorhanden – Vorschau, sobald der Eintrag öffentlich ist." : "Noch kein Screenshot."}
+                </p>
+              )}
+              <p className="text-[14px] text-muted">
+                Playwright fotografiert {d.url} (1280×800). Automatisch beim Anlegen, bei neuer Adresse und wöchentlich.
+              </p>
+              <form action={requestScreenshot}>
+                {hidden}
+                <SubmitButton className="pill pill-deep pill-sm">Screenshot aufnehmen</SubmitButton>
+              </form>
+            </div>
+          </Card>
+        )}
 
         {managed && detail.versions && (
           <Card className="xl:col-span-2">

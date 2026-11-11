@@ -85,6 +85,10 @@ Im Repo `portfolio-page-raffael` ein Workflow auf `repository_dispatch` (`showca
 Showcases/Tools rendern (`category: tool` → Tools). Felder siehe `CatalogService.Entry`;
 Screenshot: `screenshotUrl`. Fällt der Hub aus, bleibt die zuletzt gebaute Homepage stehen.
 
+**Screenshots:** Verwaltete Demos fotografiert das Erlebnis-Gate nach jedem Deploy. Externe Einträge fotografiert
+`screenshot-externals.yml` (Playwright, 1280×800): beim Anlegen, bei neuer Adresse, per Knopf „Screenshot aufnehmen“
+im Hub und montags für alle. Das PNG geht an `POST /api/ci/externals/{slug}/screenshot`.
+
 ## Betrieb
 
 - Demo-Container: Compose-Projekte `demo-<slug>` unter `/opt/demos/<slug>/` (`compose.yml`, `.env`, `agent.json`).

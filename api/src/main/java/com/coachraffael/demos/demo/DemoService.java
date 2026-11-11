@@ -1,6 +1,7 @@
 package com.coachraffael.demos.demo;
 
 import com.coachraffael.demos.catalog.CatalogNotifier;
+import com.coachraffael.demos.catalog.ScreenshotRequester;
 import com.coachraffael.demos.common.Actor;
 import com.coachraffael.demos.common.AuditLog;
 import com.coachraffael.demos.common.Errors;
@@ -58,8 +59,10 @@ public class DemoService {
     private final HubProperties props;
     private final CatalogNotifier notifier;
 
+    private final ScreenshotRequester screenshots;
+
     public DemoService(JdbcClient jdbc, ObjectMapper json, ManifestParser parser, GithubClient github,
-                       AuditLog audit, HubProperties props, CatalogNotifier notifier) {
+                       AuditLog audit, HubProperties props, CatalogNotifier notifier, ScreenshotRequester screenshots) {
         this.jdbc = jdbc;
         this.json = json;
         this.parser = parser;
@@ -67,6 +70,7 @@ public class DemoService {
         this.audit = audit;
         this.props = props;
         this.notifier = notifier;
+        this.screenshots = screenshots;
     }
 
     public record RegisterResult(Demo demo, boolean created, List<String> notes) {
@@ -203,6 +207,10 @@ public class DemoService {
         Demo d = get(slug);
         audit.record(actor, existing.isPresent() ? "external.update" : "external.create", "demo", d.id(),
                 existing.map(DemoService::summary).orElse(null), summary(d));
+        // Neuer Eintrag oder neue Adresse → Playwright fotografiert die Seite (screenshot-externals.yml)
+        if (existing.isEmpty() || !url.equals(existing.get().externalUrl())) {
+            screenshots.request(slug);
+        }
         if ("public".equals(d.visibility())) {
             notifier.catalogChanged("updated:" + slug);
         }

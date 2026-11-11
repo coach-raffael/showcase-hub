@@ -1,5 +1,6 @@
 package com.coachraffael.demos.deploy;
 
+import com.coachraffael.demos.catalog.ExternalScreenshotService;
 import com.coachraffael.demos.catalog.ScreenshotStore;
 import com.coachraffael.demos.common.Actor;
 import com.coachraffael.demos.common.HubProperties;
@@ -15,9 +16,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -28,6 +31,8 @@ import java.util.Map;
  *   <li>{@code POST /ci/deploy/{slug}/{version}/result} – Ausrollen erfolgreich/fehlgeschlagen</li>
  *   <li>{@code POST /ci/deploy/{slug}/{version}/experience} – Erlebnis-Gate gegen die laufende Demo</li>
  *   <li>{@code POST /ci/deploy/{slug}/{version}/screenshot} – PNG für Galerie und Homepage</li>
+ *   <li>{@code GET  /ci/externals?slug=} – externe Einträge, die screenshot-externals.yml fotografiert</li>
+ *   <li>{@code POST /ci/externals/{slug}/screenshot} – PNG eines externen Eintrags</li>
  * </ul>
  */
 @RestController
@@ -40,14 +45,16 @@ public class CiController {
     private final DeployService deploy;
     private final ScreenshotStore screenshots;
     private final HubProperties props;
+    private final ExternalScreenshotService externals;
 
     public CiController(DemoService demos, VersionService versions, DeployService deploy, ScreenshotStore screenshots,
-                        HubProperties props) {
+                        HubProperties props, ExternalScreenshotService externals) {
         this.demos = demos;
         this.versions = versions;
         this.deploy = deploy;
         this.screenshots = screenshots;
         this.props = props;
+        this.externals = externals;
     }
 
     public record BuildRequest(@NotBlank String repo, @NotBlank String slug, @NotBlank String sha, String path,
@@ -122,5 +129,15 @@ public class CiController {
         String url = props.publicBase() + "/api/catalog/" + slug + "/screenshot.png?v=" + v.gitSha().substring(0, 7);
         demos.updateCatalog(slug, null, null, url, Actor.currentUi());
         return Map.of("screenshotUrl", url);
+    }
+
+    @GetMapping("/ci/externals")
+    public List<ExternalScreenshotService.Target> externals(@RequestParam(required = false) String slug) {
+        return externals.targets(slug);
+    }
+
+    @PostMapping(value = "/ci/externals/{slug}/screenshot", consumes = "image/png")
+    public Map<String, Object> externalScreenshot(@PathVariable String slug, @RequestBody byte[] png) {
+        return Map.of("screenshotUrl", externals.save(slug, png, Actor.currentUi()));
     }
 }

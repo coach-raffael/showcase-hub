@@ -43,6 +43,12 @@ export async function deployDemo(form: FormData) {
     "Ausrollen über GitHub Actions gestartet");
 }
 
+export async function requestScreenshot(form: FormData) {
+  const slug = slugOf(form);
+  await run(`/admin/${slug}`, () => api(`/demos/${slug}/screenshot`, { method: "POST" }),
+    "Screenshot angefordert – Playwright nimmt die Seite in 1–2 Minuten auf");
+}
+
 export async function setVisibility(form: FormData) {
   const slug = slugOf(form);
   await run(`/admin/${slug}`, () =>

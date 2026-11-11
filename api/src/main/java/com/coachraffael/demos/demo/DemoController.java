@@ -2,6 +2,7 @@ package com.coachraffael.demos.demo;
 
 import com.coachraffael.demos.agent.AgentClient;
 import com.coachraffael.demos.agent.LifecycleService;
+import com.coachraffael.demos.catalog.ExternalScreenshotService;
 import com.coachraffael.demos.common.Actor;
 import com.coachraffael.demos.deploy.DeployService;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -35,9 +36,11 @@ public class DemoController {
     private final DeployService deploy;
     private final LifecycleService lifecycle;
     private final JdbcClient jdbc;
+    private final ExternalScreenshotService externalScreenshots;
 
     public DemoController(DemoService demos, VersionService versions, DemoEvents events, SecretService secrets,
-                          ShareLinkService shareLinks, DeployService deploy, LifecycleService lifecycle, JdbcClient jdbc) {
+                          ShareLinkService shareLinks, DeployService deploy, LifecycleService lifecycle, JdbcClient jdbc,
+                          ExternalScreenshotService externalScreenshots) {
         this.demos = demos;
         this.versions = versions;
         this.events = events;
@@ -46,6 +49,7 @@ public class DemoController {
         this.deploy = deploy;
         this.lifecycle = lifecycle;
         this.jdbc = jdbc;
+        this.externalScreenshots = externalScreenshots;
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -152,6 +156,13 @@ public class DemoController {
     @PostMapping("/demos/{slug}/deploy")
     public Map<String, Object> deploy(@PathVariable String slug, @RequestBody(required = false) DeployRequest r) {
         return deploy.deploy(slug, r == null ? null : r.sha(), Actor.currentUi());
+    }
+
+    /** Externer Eintrag: Playwright-Aufnahme anfordern (screenshot-externals.yml). */
+    @PostMapping("/demos/{slug}/screenshot")
+    public Map<String, Object> requestScreenshot(@PathVariable String slug) {
+        externalScreenshots.refresh(slug);
+        return Map.of("requested", true);
     }
 
     @PostMapping("/demos/{slug}/{action:start|stop|restart|reset}")

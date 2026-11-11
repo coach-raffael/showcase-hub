@@ -1,0 +1,78 @@
+name: screenshot-externals
+
+# Screenshots für externe Katalogeinträge (eigene Domain, z. B. realestate.coach-raffael.com).
+# Verwaltete Demos bekommen ihren Screenshot im Erlebnis-Gate von deploy-demo.yml.
+#
+# - Der Hub startet den Workflow, sobald ein externer Eintrag angelegt wird oder seine Adresse ändert,
+#   und per Knopf „Screenshot aufnehmen“ (Input slug).
+# - Wöchentlich alle externen Einträge, damit die Bilder mit den Seiten mitgehen.
+# Jedes PNG geht an POST /api/ci/externals/{slug}/screenshot; ist der Eintrag öffentlich, baut die
+# Homepage danach neu.
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Slug eines externen Eintrags (leer = alle)"
+        type: string
+        default: ""
+  schedule:
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: screenshot-externals-${{ inputs.slug || 'all' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  shoot:
+    runs-on: ubuntu-latest
+    environment: production   # HUB_CI_TOKEN liegt als Environment-Secret
+    timeout-minutes: 20
+    env:
+      HUB: ${{ vars.HUB_URL || 'https://demos.coach-raffael.com' }}
+      SLUG: ${{ inputs.slug }}
+      TOKEN: ${{ secrets.HUB_CI_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Werkzeuge
+        run: |
+          cd tools/experience && npm install --no-audit --no-fund
+          # --with-deps braucht apt; fallen die Ubuntu-Spiegel aus, reichen meist die Bibliotheken des Runners
+          timeout 300 npx playwright install --with-deps chromium \
+            || { echo "::warning::apt nicht erreichbar – Chromium ohne Systempakete"; npx playwright install chromium; }
+
+      - name: Aufnehmen und an den Hub melden
+        run: |
+          test -n "$TOKEN" || { echo "::error::Secret HUB_CI_TOKEN fehlt"; exit 1; }
+          case "$SLUG" in ""|[a-z0-9]*) ;; *) echo "::error::Slug ungültig"; exit 1;; esac
+          curl -fsS --max-time 30 -H "Authorization: Bearer $TOKEN" --get --data-urlencode "slug=$SLUG" \
+            "$HUB/api/ci/externals" > targets.json
+          echo "Ziele: $(jq -r 'map(.slug) | join(", ")' targets.json)"
+          mkdir -p shots
+          failed=0
+          while IFS=$'\t' read -r slug url; do
+            if node tools/experience/shot.mjs "$url" "shots/$slug.png"; then
+              curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/png" \
+                --data-binary "@shots/$slug.png" "$HUB/api/ci/externals/$slug/screenshot" | jq -r '.screenshotUrl'
+            else
+              echo "::warning::$slug ($url) nicht aufgenommen – der alte Screenshot bleibt"
+              failed=$((failed + 1))
+            fi
+          done < <(jq -r '.[] | [.slug, .url] | @tsv' targets.json)
+          # Ein einzelner angeforderter Eintrag, der nicht klappt, soll rot werden; beim Wochenlauf nur warnen
+          if [ -n "$SLUG" ] && [ "$failed" -gt 0 ]; then exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots/
+          if-no-files-found: ignore
+          retention-days: 7
