@@ -56,6 +56,9 @@ export default async function Demos({ searchParams }: { searchParams: Promise<{ 
                     <SubmitButton className="pill pill-deep pill-sm">Starten</SubmitButton>
                   </form>
                 )}
+                <Link href={`/admin/${d.slug}`} className="pill pill-soft pill-sm">
+                  Verwalten
+                </Link>
                 <a href={d.url} target="_blank" rel="noopener" className="pill pill-soft pill-sm">
                   Öffnen ↗
                 </a>
