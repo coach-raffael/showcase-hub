@@ -5,9 +5,9 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ManifestParserTest {
+public class ManifestParserTest {
 
-    static final String VALID = """
+    public static final String VALID = """
             slug: realestate-platform
             title: { en: "Real Estate Platform", de: "Immobilienplattform" }
             teaser: { en: "Listings, bookings, contracts" }
