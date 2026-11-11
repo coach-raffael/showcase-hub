@@ -114,9 +114,11 @@ jobs:
           scp agent.json vps:"$dir/agent.json.new"
           ssh vps "set -e; cd '$dir'; chmod 640 compose.yml.new .env.new agent.json.new; \
             mv compose.yml.new compose.yml; mv .env.new .env; mv agent.json.new agent.json; \
-            echo '$GHCR_TOKEN' | docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null; \
+            docker logout ghcr.io >/dev/null 2>&1 || true; \
+            export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; \
+            echo '$GHCR_TOKEN' | docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null 2>&1; \
             docker compose -p 'demo-$SLUG' --env-file .env pull --quiet; \
-            docker logout ghcr.io >/dev/null; \
+            rm -rf \"\$DOCKER_CONFIG\"; unset DOCKER_CONFIG; \
             docker compose -p 'demo-$SLUG' --env-file .env up -d --remove-orphans; \
             docker image prune -f >/dev/null"
 
