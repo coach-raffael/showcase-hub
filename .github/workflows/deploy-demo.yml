@@ -159,6 +159,7 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     environment: production   # HUB_CI_TOKEN liegt als Environment-Secret
+    timeout-minutes: 30
     env:
       PUBLIC_URL: ${{ needs.deploy.outputs.public_url }}
     steps:
@@ -178,8 +179,12 @@ jobs:
 
       - name: Werkzeuge
         run: |
-          cd hub/tools/experience && npm install --no-audit --no-fund && npx playwright install --with-deps chromium
           mkdir -p "$GITHUB_WORKSPACE/out"
+          cd hub/tools/experience && npm install --no-audit --no-fund
+          # --with-deps braucht apt; fallen die Ubuntu-Spiegel aus (DNS), reichen meist die
+          # vorinstallierten Bibliotheken des Runners – dann nur den Browser holen.
+          timeout 300 npx playwright install --with-deps chromium \
+            || { echo "::warning::apt nicht erreichbar – Chromium ohne Systempakete"; npx playwright install chromium; }
 
       - name: Konsole, Links, Mobil, Screenshot
         run: node hub/tools/experience/check.mjs "$PUBLIC_URL/" out/visitor.json out/screenshot.png || true
@@ -244,6 +249,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.HUB_CI_TOKEN }}
         run: |
+          mkdir -p out
           for f in smoke visitor flows lighthouse headers; do [ -f "out/$f.json" ] || echo '[]' > "out/$f.json"; done
           jq -s 'add' out/smoke.json out/visitor.json out/flows.json out/lighthouse.json out/headers.json > out/checks.json
           cat out/checks.json
