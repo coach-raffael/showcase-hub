@@ -42,6 +42,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read   # private Showcase-Images: Paket muss showcase-hub Lesezugriff geben (Package settings → Manage Actions access)
     outputs:
       public_url: ${{ steps.bundle.outputs.public_url }}
       repo: ${{ steps.bundle.outputs.repo }}
@@ -100,6 +103,9 @@ jobs:
           EOF
 
       - name: Ausrollen
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           dir="/opt/demos/$SLUG"
           ssh vps "set -e; install -d -m 2750 '$dir'; cd '$dir'; for f in compose.yml .env agent.json; do [ -f \$f ] && cp -p \$f \$f.prev || true; done"
@@ -108,7 +114,9 @@ jobs:
           scp agent.json vps:"$dir/agent.json.new"
           ssh vps "set -e; cd '$dir'; chmod 640 compose.yml.new .env.new agent.json.new; \
             mv compose.yml.new compose.yml; mv .env.new .env; mv agent.json.new agent.json; \
+            echo '$GHCR_TOKEN' | docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null; \
             docker compose -p 'demo-$SLUG' --env-file .env pull --quiet; \
+            docker logout ghcr.io >/dev/null; \
             docker compose -p 'demo-$SLUG' --env-file .env up -d --remove-orphans; \
             docker image prune -f >/dev/null"
 
@@ -160,6 +168,8 @@ jobs:
           repository: ${{ needs.deploy.outputs.repo }}
           ref: ${{ needs.deploy.outputs.sha }}
           path: showcase
+          # private Showcase-Repos: HUB_GITHUB_TOKEN muss das Repo umfassen (Contents: read)
+          token: ${{ secrets.HUB_GITHUB_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
