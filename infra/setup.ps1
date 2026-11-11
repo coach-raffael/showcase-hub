@@ -80,8 +80,14 @@ if (-not (Test-Path $KeyFile)) {
     Assert-Ok "ssh-keygen"
 }
 $DeployPub   = (Get-Content "$KeyFile.pub" -Raw).Trim()
-$KnownHosts  = (ssh-keyscan -T 15 $VpsHost 2>$null) -join "`n"
-if (-not $KnownHosts) { throw "ssh-keyscan liefert nichts – VPS erreichbar?" }
+# Host-Keys direkt vom Server lesen (über deinen root-Zugang) – ssh-keyscan liefert unter Windows oft nichts
+$hk = ssh @Ssh -i $RootKey -o IdentitiesOnly=yes "$VpsAdmin@$VpsHost" "cat /etc/ssh/ssh_host_*_key.pub"
+Assert-Ok "root-Anmeldung am VPS (Schlüssel $RootKey)"
+# Zeilen "typ schlüssel kommentar" → known_hosts-Format "host typ schlüssel"
+$KnownHosts = (($hk | Out-String) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match "^ssh-|^ecdsa-" } |
+    ForEach-Object { $p = $_ -split "\s+"; "$VpsHost $($p[0]) $($p[1])" }) -join "`n"
+if (-not $KnownHosts) { throw "Host-Keys nicht lesbar: $hk" }
+Write-Host "Host-Keys:"; Write-Host $KnownHosts
 
 # ---------------------------------------------------------------------------------------------------------
 # 3. Server einrichten (einmalig): demo-agent, Benutzer demos-deploy, Verzeichnisse
