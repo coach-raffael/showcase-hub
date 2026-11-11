@@ -204,7 +204,13 @@ jobs:
             exit 0
           fi
           cd showcase/e2e
-          npm ci --no-audit --no-fund && npx playwright install --with-deps chromium
+          if [ -f package-lock.json ]; then inst="npm ci"; else inst="npm install"; fi
+          if ! $inst --no-audit --no-fund > ../../out/flows-install.log 2>&1; then
+            jq -n --arg d "$inst in e2e/ fehlgeschlagen: $(tail -15 ../../out/flows-install.log)" \
+              '[{name:"flows", ok:false, detail:$d}]' > ../../out/flows.json
+            exit 0
+          fi
+          timeout 300 npx playwright install --with-deps chromium || npx playwright install chromium
           files=$(printf '%s\n' $flows | sed 's#^e2e/##')
           if npx playwright test $files --reporter=line > ../../out/flows.log 2>&1; then
             jq -n --arg d "$(tail -5 ../../out/flows.log)" '[{name:"flows", ok:true, detail:$d}]' > ../../out/flows.json
@@ -217,9 +223,11 @@ jobs:
         env:
           TOKEN: ${{ secrets.HUB_CI_TOKEN }}
         run: |
+          # is-crawlable übersprungen: X-Robots-Tag setzt der Hub selbst nach Sichtbarkeit (noindex bis public)
           limits=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HUB/api/ci/deploy/$SLUG/$VERSION/bundle" | jq -c '.lighthouse // {}')
           if npx -y lighthouse@12 "$PUBLIC_URL/" --quiet --output=json --output-path=out/lh.json \
                --only-categories=performance,accessibility,best-practices,seo \
+               --skip-audits=is-crawlable \
                --chrome-flags="--headless=new --no-sandbox"; then
             jq --argjson lim "$limits" '
               [.categories | to_entries[] | {k: .key, s: ((.value.score // 0) * 100 | floor), min: ($lim[.key] // 90)}] as $r
