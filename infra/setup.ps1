@@ -123,8 +123,9 @@ chown $DeployUser /opt/showcase-hub
 chown 10001 /srv/showcase-hub/data
 exit 0
 "@
-# CRLF aus ISE entfernen, sonst stolpert bash
-$remote = $remote -replace "`r", ""
+# CRLF aus ISE entfernen, sonst stolpert bash. Das abschließende `n ist nötig: Windows PowerShell hängt beim
+# Pipen ein CR+LF an – so landet das CR in einer eigenen Zeile nach "exit 0" und wird nie ausgeführt.
+$remote = ($remote -replace "`r", "") + "`n"
 $remote | ssh @Ssh -i $RootKey -o IdentitiesOnly=yes "$VpsAdmin@$VpsHost" "bash -s"
 Assert-Ok "Server-Einrichtung"
 
