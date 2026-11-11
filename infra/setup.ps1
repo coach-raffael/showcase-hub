@@ -20,6 +20,7 @@ $Repo       = "$Org/showcase-hub"
 $Homepage   = "$Org/portfolio-page-raffael"
 $VpsHost    = "srv1366958.hstgr.cloud"
 $VpsAdmin   = "root"                        # Benutzer mit Root-Rechten für die einmalige Einrichtung
+$RootKey    = Join-Path $HOME ".ssh\hostinger_root"   # dein Schlüssel für root@VPS
 $DeployUser = "demos-deploy"
 $KeyFile    = Join-Path $env:USERPROFILE ".ssh\showcase-hub-deploy"
 $Vault      = Join-Path $env:USERPROFILE "showcase-hub-secrets.txt"   # danach in den Passwortmanager, Datei löschen
