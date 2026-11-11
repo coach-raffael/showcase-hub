@@ -57,10 +57,10 @@ Prüfen: `systemctl status demo-agent`, `ls -l /run/demo-agent/agent.sock`.
 **Variablen:** `AGENT_GID` (aus Schritt 2), `HOMEPAGE_REPO` = `coach-raffael/portfolio-page-raffael` (leer = aus),
 `DEPLOY_ENABLED` = `true`, sobald der erste manuelle Deploy lief.
 
-**Organisation → Secrets:** `SHOWCASE_HUB_TOKEN` = derselbe Wert wie `HUB_CI_TOKEN`. Bei GitHub Free stehen
-Org-Secrets öffentlichen Repos zur Verfügung – Showcases sind öffentlich, passt.
+**Je Showcase-Repo:** Secret `SHOWCASE_HUB_TOKEN` = derselbe Wert wie `HUB_CI_TOKEN`
+(`coach-raffael` ist ein Benutzerkonto – Secrets für alle Repos auf einmal gibt es dort nicht).
 
-**Organisation → Packages:** Images öffentlicher Showcase-Repos sind öffentlich; der VPS braucht für Demos
+**Packages:** Images öffentlicher Showcase-Repos sind öffentlich; der VPS braucht für Demos
 keinen Pull-Token. Das Hub-Image zieht `deploy.yml` mit dem `GITHUB_TOKEN`.
 
 ## 5. Erster Start

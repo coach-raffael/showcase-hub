@@ -21,4 +21,5 @@ Konventionen:
 - Cookies mit Präfix `DEMO_COOKIE_PREFIX` (alle Demos teilen sich einen Origin).
 - Demo-Daten fiktiv, Seed + Reset-Befehl (`reset` in demo.yaml), kein echtes Secret im Repo.
 - Ein sichtbares Demo-Banner („Showcase – data resets nightly“).
-- Repo öffentlich, Org-Secret `SHOWCASE_HUB_TOKEN` steht automatisch zur Verfügung.
+- Repo öffentlich. Secret `SHOWCASE_HUB_TOKEN` (= `HUB_CI_TOKEN` des Hubs) im neuen Repo setzen:
+  `gh secret set SHOWCASE_HUB_TOKEN --repo coach-raffael/<repo>` – coach-raffael ist ein Benutzerkonto, Org-Secrets gibt es dort nicht.

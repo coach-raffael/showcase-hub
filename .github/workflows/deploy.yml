@@ -72,7 +72,7 @@ jobs:
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
           HUB_SECRET_KEY: ${{ secrets.HUB_SECRET_KEY }}       # 32 Byte Base64: openssl rand -base64 32
-          HUB_CI_TOKEN: ${{ secrets.HUB_CI_TOKEN }}           # hubci_… – gleicher Wert wie Org-Secret SHOWCASE_HUB_TOKEN
+          HUB_CI_TOKEN: ${{ secrets.HUB_CI_TOKEN }}           # hubci_… – gleicher Wert wie SHOWCASE_HUB_TOKEN in jedem Showcase-Repo
           HUB_GITHUB_TOKEN: ${{ secrets.HUB_GITHUB_TOKEN }}   # Fine-grained: Actions write (showcase-hub), Contents write (Homepage)
           AGENT_KEY: ${{ secrets.AGENT_KEY }}                 # gleicher Wert wie /etc/demo-agent/key
           AGENT_GID: ${{ vars.AGENT_GID }}                    # GID der Gruppe demo-agent (Ausgabe von agent/install.sh)

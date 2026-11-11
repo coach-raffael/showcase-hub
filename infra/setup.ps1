@@ -2,7 +2,6 @@
 #
 # Voraussetzungen auf dem Rechner: gh (angemeldet), git, OpenSSH-Client (ssh, ssh-keygen, ssh-keyscan).
 # ISE kann keine Eingaben an Konsolenprogramme weiterreichen: SSH zum VPS muss per Schlüssel ohne Passwort gehen,
-# und gh braucht den Scope admin:org schon vorher (sonst einmal im normalen Terminal: gh auth refresh -s admin:org).
 # Vorher von Hand: DNS-Eintrag A "demos" → VPS-IP bei Hostinger; Fine-grained Token für den Hub (Actions: write auf showcase-hub, Contents: write auf portfolio-page-raffael).
 #
 # Abschnittsweise ausführen (in ISE: markieren + F8) – oder alles mit F5. Jeder Schritt ist wiederholbar.
@@ -25,11 +24,6 @@ $DeployUser = "demos-deploy"
 $KeyFile    = Join-Path $env:USERPROFILE ".ssh\showcase-hub-deploy"
 $Vault      = Join-Path $env:USERPROFILE "showcase-hub-secrets.txt"   # danach in den Passwortmanager, Datei löschen
 
-# gh braucht für Org-Secrets den Scope admin:org
-$ghStatus = (gh auth status 2>&1 | Out-String)
-if ($ghStatus -notmatch "admin:org") {
-    throw "gh fehlt der Scope admin:org – einmal im normalen Terminal: gh auth refresh -h github.com -s admin:org"
-}
 $Ssh = @("-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes")
 if (-not (Test-Path $RootKey)) { throw "Root-Schlüssel $RootKey nicht gefunden" }
 
@@ -169,9 +163,9 @@ Write-Host "Für den Claude-Connector (demos-mcp) steht das Client-Secret in $Va
 # ---------------------------------------------------------------------------------------------------------
 gh api -X PUT "repos/$Repo/environments/production" | Out-Null
 
-# Privates Hub-Repo: Showcase-Repos der Organisation dürfen build-showcase.yml aufrufen
-gh api -X PUT "repos/$Repo/actions/permissions/access" -f access_level=organization
-if ($LASTEXITCODE -ne 0) { Write-Warning "Workflow-Freigabe für die Organisation nicht gesetzt – Settings → Actions → General → Access" }
+# Andere Repos von coach-raffael dürfen build-showcase.yml aufrufen (Benutzerkonto: Stufe "user")
+gh api -X PUT "repos/$Repo/actions/permissions/access" -f access_level=user | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Warning "Workflow-Freigabe nicht gesetzt (bei öffentlichem Repo nicht nötig)" }
 
 function Set-EnvSecret([string]$name, [string]$value) {
     if (-not $value) { throw "$name ist leer" }
@@ -194,9 +188,12 @@ gh variable set AGENT_GID     --repo $Repo --body $AgentGid
 gh variable set HOMEPAGE_REPO --repo $Repo --body $Homepage
 gh variable set SSH_USER      --repo $Repo --body $DeployUser
 
-# Org-Secret für alle Showcase-Repos (bei GitHub Free: nutzbar in öffentlichen Repos)
-gh secret set SHOWCASE_HUB_TOKEN --org $Org --visibility all --body $HubCiToken
-Assert-Ok "Org-Secret SHOWCASE_HUB_TOKEN"
+# coach-raffael ist ein Benutzerkonto: kein Org-Secret, sondern SHOWCASE_HUB_TOKEN je Showcase-Repo.
+# Für jedes neue Showcase einmal aufrufen, z. B.:  Add-ShowcaseRepo "realestate-platform"
+function Add-ShowcaseRepo([string]$name) {
+    gh secret set SHOWCASE_HUB_TOKEN --repo "$Org/$name" --body $HubCiToken
+    Assert-Ok "SHOWCASE_HUB_TOKEN für $name"
+}
 
 gh secret list --repo $Repo --env production
 gh variable list --repo $Repo

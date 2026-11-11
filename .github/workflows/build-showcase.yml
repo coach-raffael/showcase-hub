@@ -51,7 +51,7 @@ on:
         default: https://demos.coach-raffael.com
     secrets:
       hub-token:
-        description: "HUB_CI_TOKEN (hubci_…) – als Org-Secret SHOWCASE_HUB_TOKEN"
+        description: "HUB_CI_TOKEN (hubci_…) – im Showcase-Repo als Secret SHOWCASE_HUB_TOKEN"
         required: true
 
 jobs:
