@@ -148,6 +148,7 @@ jobs:
   experience:
     needs: deploy
     runs-on: ubuntu-latest
+    environment: production   # HUB_CI_TOKEN liegt als Environment-Secret
     env:
       PUBLIC_URL: ${{ needs.deploy.outputs.public_url }}
     steps:
