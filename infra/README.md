@@ -36,9 +36,8 @@ Prüfen: `systemctl status demo-agent`, `ls -l /run/demo-agent/agent.sock`.
 ## 3. Keycloak (Repo identity, als Code)
 
 - Clients `demos-web` und `demos-mcp` sowie die Rolle `demos-admin` liegen in `coach-raffael/identity` (realm/coach-raffael.json); die Secrets erzeugt und setzt `infra/setup.ps1`
-  Post-Logout `https://demos.coach-raffael.com/*`, Audience-Mapper → `demos-api`
-- Client `demos-mcp` für den Claude-Connector (wie `crm-mcp`), Audience `demos-api`
-- Realm-Rolle `demos-admin` → Raffael
+  (Audience `demos-api`, Redirect `https://demos.coach-raffael.com/auth/callback/keycloak`)
+- Rolle `demos-admin` dir selbst zuweisen: Admin-Konsole → coach-raffael → Users → Role mapping (Nutzer sind keine Konfiguration)
 
 ## 4. GitHub
 
@@ -49,7 +48,7 @@ Prüfen: `systemctl status demo-agent`, `ls -l /run/demo-agent/agent.sock`.
 | `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` | wie bei crm-tool, Benutzer `demos-deploy` |
 | `DB_PASSWORD` | `openssl rand -hex 24` |
 | `AUTH_SECRET` | `openssl rand -hex 32` |
-| `KEYCLOAK_CLIENT_SECRET` | Secret des Clients `demos-web` |
+| `KEYCLOAK_CLIENT_SECRET` | Secret des Clients `demos-web` (= `DEMOS_WEB_CLIENT_SECRET` in identity) |
 | `HUB_SECRET_KEY` | `openssl rand -base64 32` – verschlüsselt Demo-Secrets in der DB (nie wechseln) |
 | `HUB_CI_TOKEN` | `echo "hubci_$(openssl rand -hex 24)"` – Builds/Deploys melden |
 | `HUB_GITHUB_TOKEN` | Fine-grained PAT (Org coach-raffael): **Actions: write** auf `showcase-hub`, **Contents: write** auf `portfolio-page-raffael` |
